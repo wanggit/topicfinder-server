@@ -2,6 +2,7 @@ import { config } from 'dotenv';
 import { createPool } from 'mysql2/promise';
 import { createServer } from 'http';
 import { createApp } from './app';
+import { ensureAdminAccount } from './modules/admin-bootstrap';
 
 config();
 
@@ -28,6 +29,9 @@ async function checkDb(): Promise<boolean> {
 
 async function main() {
   const dbHealthy = await checkDb();
+  if (dbHealthy) {
+    await ensureAdminAccount(pool);
+  }
   const app = createApp({
     dbHealthy,
     pool,

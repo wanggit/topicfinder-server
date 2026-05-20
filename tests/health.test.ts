@@ -22,6 +22,31 @@ describe('GET /health', () => {
   });
 });
 
+describe('CORS middleware', () => {
+  it('returns allow-origin header for browser requests', async () => {
+    const app = createApp({ dbHealthy: true });
+
+    const res = await request(app)
+      .get('/health')
+      .set('Origin', 'http://localhost:10086');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:10086');
+  });
+
+  it('handles preflight requests', async () => {
+    const app = createApp({ dbHealthy: true });
+
+    const res = await request(app)
+      .options('/api/profile')
+      .set('Origin', 'http://localhost:10086')
+      .set('Access-Control-Request-Method', 'GET');
+
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:10086');
+  });
+});
+
 describe('error middleware', () => {
   it('returns 500 JSON on uncaught errors', async () => {
     const app = createApp({ dbHealthy: true });

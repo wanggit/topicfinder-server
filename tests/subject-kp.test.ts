@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
+import { adminToken, TEST_SECRET } from './helpers/tokens';
 
 function mockPool(overrides: Record<string, any> = {}) {
   return {
@@ -17,27 +18,34 @@ const sampleKP = { id: 1, subject_id: 1, name: '一元一次方程', description
 describe('Admin Subject CRUD', () => {
   it('GET /api/admin/subjects?gradeId=X returns subjects', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([[sampleSubject]]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).get('/api/admin/subjects?gradeId=1');
+    const res = await request(app)
+      .get('/api/admin/subjects?gradeId=1')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual([sampleSubject]);
   });
 
   it('POST /api/admin/subjects creates a subject', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([{ insertId: 2 }]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).post('/api/admin/subjects').send({ gradeId: 1, name: '英语', sortOrder: 2 });
+    const res = await request(app)
+      .post('/api/admin/subjects')
+      .set('Authorization', `Bearer ${adminToken()}`)
+      .send({ gradeId: 1, name: '英语', sortOrder: 2 });
     expect(res.status).toBe(201);
     expect(res.body.id).toBe(2);
   });
 
   it('DELETE /api/admin/subjects/:id cascades to knowledge_points', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).delete('/api/admin/subjects/1');
+    const res = await request(app)
+      .delete('/api/admin/subjects/1')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
   });
 });
@@ -45,18 +53,23 @@ describe('Admin Subject CRUD', () => {
 describe('Admin KnowledgePoint CRUD', () => {
   it('GET /api/admin/knowledge-points?subjectId=X returns KPs', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([[sampleKP]]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).get('/api/admin/knowledge-points?subjectId=1');
+    const res = await request(app)
+      .get('/api/admin/knowledge-points?subjectId=1')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual([sampleKP]);
   });
 
   it('POST /api/admin/knowledge-points creates a KP', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([{ insertId: 3 }]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).post('/api/admin/knowledge-points').send({ subjectId: 1, name: '分数加减法' });
+    const res = await request(app)
+      .post('/api/admin/knowledge-points')
+      .set('Authorization', `Bearer ${adminToken()}`)
+      .send({ subjectId: 1, name: '分数加减法' });
     expect(res.status).toBe(201);
     expect(res.body.id).toBe(3);
   });
@@ -64,13 +77,14 @@ describe('Admin KnowledgePoint CRUD', () => {
   it('PUT /api/admin/knowledge-points/:id/versions sets version associations', async () => {
     const pool = mockPool({
       query: vi.fn()
-        .mockResolvedValueOnce([]) // DELETE existing
-        .mockResolvedValueOnce([{ insertId: 1 }]), // INSERT
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ insertId: 1 }]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
     const res = await request(app)
       .put('/api/admin/knowledge-points/1/versions')
+      .set('Authorization', `Bearer ${adminToken()}`)
       .send({ versionIds: [1, 2] });
 
     expect(res.status).toBe(200);

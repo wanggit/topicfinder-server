@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
+import { adminToken, TEST_SECRET } from './helpers/tokens';
 
 function mockPool(overrides: Record<string, any> = {}) {
   return {
@@ -24,12 +25,14 @@ describe('Admin Question CRUD', () => {
   it('GET /api/admin/questions returns paginated list', async () => {
     const pool = mockPool({
       query: vi.fn()
-        .mockResolvedValueOnce([[sampleQuestion]]) // questions
-        .mockResolvedValueOnce([[{ total: 1 }]]),  // count
+        .mockResolvedValueOnce([[sampleQuestion]])
+        .mockResolvedValueOnce([[{ total: 1 }]]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).get('/api/admin/questions?kpId=1&page=1');
+    const res = await request(app)
+      .get('/api/admin/questions?kpId=1&page=1')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
     expect(res.body.questions).toHaveLength(1);
     expect(res.body.total).toBe(1);
@@ -37,13 +40,16 @@ describe('Admin Question CRUD', () => {
 
   it('POST /api/admin/questions creates a question', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([{ insertId: 5 }]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).post('/api/admin/questions').send({
-      knowledgePointId: 1, type: 'choice', difficulty: 'easy',
-      stem: '2+2等于几？', options: ['3', '4', '5', '6'], answer: '4',
-      explanation: '基础加法', solutionSteps: [], commonMistakes: [], conceptTags: [],
-    });
+    const res = await request(app)
+      .post('/api/admin/questions')
+      .set('Authorization', `Bearer ${adminToken()}`)
+      .send({
+        knowledgePointId: 1, type: 'choice', difficulty: 'easy',
+        stem: '2+2等于几？', options: ['3', '4', '5', '6'], answer: '4',
+        explanation: '基础加法', solutionSteps: [], commonMistakes: [], conceptTags: [],
+      });
 
     expect(res.status).toBe(201);
     expect(res.body.id).toBe(5);
@@ -51,17 +57,22 @@ describe('Admin Question CRUD', () => {
 
   it('PUT /api/admin/questions/:id updates a question', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).put('/api/admin/questions/1').send({ stem: '更新后的题目' });
+    const res = await request(app)
+      .put('/api/admin/questions/1')
+      .set('Authorization', `Bearer ${adminToken()}`)
+      .send({ stem: '更新后的题目' });
     expect(res.status).toBe(200);
   });
 
   it('DELETE /api/admin/questions/:id deletes a question', async () => {
     const pool = mockPool({ query: vi.fn().mockResolvedValueOnce([]) });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).delete('/api/admin/questions/1');
+    const res = await request(app)
+      .delete('/api/admin/questions/1')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
   });
 
@@ -71,9 +82,11 @@ describe('Admin Question CRUD', () => {
         .mockResolvedValueOnce([[sampleQuestion]])
         .mockResolvedValueOnce([[{ total: 1 }]]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).get('/api/admin/questions?kpId=1&type=choice&difficulty=easy');
+    const res = await request(app)
+      .get('/api/admin/questions?kpId=1&type=choice&difficulty=easy')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
   });
 });

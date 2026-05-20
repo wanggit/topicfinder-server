@@ -1,7 +1,10 @@
 import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server } from 'http';
+import { createSelectionModule, MySqlSelectionRepo, SelectionRepo } from './modules/selection';
 
 export interface AppOptions {
   dbHealthy: boolean;
@@ -13,19 +16,26 @@ export interface AppOptions {
     analyzeImage: (imageBase64: string, prompt: string) => Promise<string>;
     streamChat: (messages: any[], model?: string) => any;
   };
+  selectionRepo?: SelectionRepo;
 }
 
 declare global {
   namespace Express {
     interface Request {
       student?: { openid: string; studentId: number };
+      admin?: { adminId: number; username: string };
     }
   }
 }
 
 export function createApp(options: AppOptions) {
   const app = express();
+  app.use(cors({ origin: true, credentials: true }));
   app.use(express.json());
+
+  const selectionModule = createSelectionModule(
+    options.selectionRepo ?? new MySqlSelectionRepo(options.pool),
+  );
 
   // ── Health ──────────────────────────────────────────
   app.get('/health', async (_req: Request, res: Response, next: NextFunction) => {
@@ -108,6 +118,64 @@ export function createApp(options: AppOptions) {
     next();
   }
 
+  // ── Admin Auth ────────────────────────────────────────
+  app.post('/api/admin/login', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { username, password } = req.body;
+      if (!username || !password) {
+        res.status(400).json({ error: { code: 'MISSING_FIELDS', message: '用户名和密码不能为空' } });
+        return;
+      }
+
+      const pool = options.pool;
+      if (!pool) {
+        res.status(500).json({ error: { code: 'NO_DB', message: 'Database not configured' } });
+        return;
+      }
+
+      const [rows] = await pool.query('SELECT id, username, password_hash FROM admins WHERE username = ?', [username]);
+      const admin = (rows as any[])[0];
+
+      if (!admin) {
+        res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' } });
+        return;
+      }
+
+      const valid = await bcrypt.compare(password, admin.password_hash);
+      if (!valid) {
+        res.status(401).json({ error: { code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' } });
+        return;
+      }
+
+      const token = jwt.sign({ adminId: admin.id, username: admin.username, role: 'admin' }, jwtSecret, { expiresIn: '7d' });
+      res.json({ token, username: admin.username });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  function authenticateAdmin(req: Request, res: Response, next: NextFunction) {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith('Bearer ')) {
+      res.status(401).json({ error: { code: 'UNAUTHORIZED', message: '请先登录' } });
+      return;
+    }
+    try {
+      const payload = jwt.verify(header.slice(7), jwtSecret) as any;
+      if (payload.role !== 'admin') {
+        res.status(403).json({ error: { code: 'FORBIDDEN', message: '需要管理员权限' } });
+        return;
+      }
+      req.admin = { adminId: payload.adminId, username: payload.username };
+      next();
+    } catch {
+      res.status(401).json({ error: { code: 'UNAUTHORIZED', message: '登录已过期，请重新登录' } });
+    }
+  }
+
+  // ── Admin routes require authentication (except login above) ──
+  app.use('/api/admin', authenticateAdmin);
+
   // ── Protected test route ────────────────────────────
   if (options.protectedTestRoute) {
     app.get('/api/protected', authenticate, async (req: Request, res: Response, next: NextFunction) => {
@@ -139,6 +207,13 @@ export function createApp(options: AppOptions) {
   }
 
   // ── Knowledge: Versions ───────────────────────────
+  app.get('/api/versions', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query('SELECT * FROM versions ORDER BY id');
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
   app.get('/api/admin/versions', async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const [rows] = await options.pool.query('SELECT * FROM versions ORDER BY id');
@@ -190,6 +265,24 @@ export function createApp(options: AppOptions) {
         [versionId, name, sortOrder || 0]
       );
       res.status(201).json({ id: (result as any).insertId, version_id: versionId, name });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/admin/grades/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { name, sortOrder } = req.body;
+      await options.pool.query(
+        'UPDATE grades SET name = ?, sort_order = ? WHERE id = ?',
+        [name, sortOrder || 0, req.params.id]
+      );
+      res.json({ id: Number(req.params.id), name, sort_order: sortOrder || 0 });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/admin/grades/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await options.pool.query('DELETE FROM grades WHERE id = ?', [req.params.id]);
+      res.json({ ok: true });
     } catch (err) { next(err); }
   });
 
@@ -325,6 +418,17 @@ export function createApp(options: AppOptions) {
     } catch (err) { next(err); }
   });
 
+  app.put('/api/admin/subjects/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { name, sortOrder } = req.body;
+      await options.pool.query(
+        'UPDATE subjects SET name = ?, sort_order = ? WHERE id = ?',
+        [name, sortOrder || 0, req.params.id]
+      );
+      res.json({ id: Number(req.params.id), name, sort_order: sortOrder || 0 });
+    } catch (err) { next(err); }
+  });
+
   app.delete('/api/admin/subjects/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
       await options.pool.query('DELETE FROM knowledge_points WHERE subject_id = ?', [req.params.id]);
@@ -353,6 +457,24 @@ export function createApp(options: AppOptions) {
         [subjectId, name, description || '']
       );
       res.status(201).json({ id: (result as any).insertId, subject_id: subjectId, name });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/admin/knowledge-points/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { name, description } = req.body;
+      await options.pool.query(
+        'UPDATE knowledge_points SET name = ?, description = ? WHERE id = ?',
+        [name, description || '', req.params.id]
+      );
+      res.json({ id: Number(req.params.id), name, description: description || '' });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/admin/knowledge-points/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await options.pool.query('DELETE FROM knowledge_points WHERE id = ?', [req.params.id]);
+      res.json({ ok: true });
     } catch (err) { next(err); }
   });
 
@@ -439,67 +561,13 @@ export function createApp(options: AppOptions) {
   // ── Question Selection ────────────────────────────
   app.post('/api/questions/select', authenticate, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { knowledgePointId, freeDescription, count = 10 } = req.body;
-      const studentId = req.student!.studentId;
-
-      const [records] = await options.pool.query(
-        'SELECT id FROM answer_records WHERE student_id = ? AND knowledge_point_id = ? LIMIT 1',
-        [studentId, knowledgePointId]
-      );
-      const isFirstContact = (records as any[]).length === 0;
-
-      let questions: any[] = [];
-
-      if (isFirstContact) {
-        const [rows] = await options.pool.query(
-          'SELECT * FROM questions WHERE knowledge_point_id = ? AND review_status = ? ORDER BY FIELD(difficulty, "easy","medium","hard") LIMIT ?',
-          [knowledgePointId, 'approved', count]
-        );
-        questions = rows as any[];
-      } else {
-        const [wrongRows] = await options.pool.query(
-          'SELECT question_id FROM wrong_notes WHERE student_id = ? AND consecutive_correct < 3 ORDER BY updated_at DESC',
-          [studentId]
-        );
-        const wrongIds = (wrongRows as any[]).map(r => r.question_id);
-
-        if (wrongIds.length > 0) {
-          const placeholders = wrongIds.map(() => '?').join(',');
-          const [wrongQs] = await options.pool.query(
-            `SELECT * FROM questions WHERE id IN (${placeholders}) AND review_status = ?`,
-            [...wrongIds, 'approved']
-          );
-          questions = wrongQs as any[];
-        }
-
-        const remaining = count - questions.length;
-        if (remaining > 0) {
-          const existingIds = questions.map(q => q.id);
-          if (existingIds.length > 0) {
-            const placeholders = existingIds.map(() => '?').join(',');
-            const [more] = await options.pool.query(
-              `SELECT * FROM questions WHERE knowledge_point_id = ? AND review_status = ? AND id NOT IN (${placeholders}) ORDER BY FIELD(difficulty, "easy","medium","hard") LIMIT ?`,
-              [knowledgePointId, 'approved', ...existingIds, remaining]
-            );
-            questions = questions.concat(more as any[]);
-          } else {
-            const [more] = await options.pool.query(
-              'SELECT * FROM questions WHERE knowledge_point_id = ? AND review_status = ? ORDER BY FIELD(difficulty, "easy","medium","hard") LIMIT ?',
-              [knowledgePointId, 'approved', remaining]
-            );
-            questions = questions.concat(more as any[]);
-          }
-        }
+      const { knowledgePointId, count } = req.body;
+      if (!knowledgePointId) {
+        res.status(400).json({ error: { code: 'MISSING_PARAMS', message: 'knowledgePointId required' } });
+        return;
       }
-
-      const [totalRows] = await options.pool.query(
-        'SELECT COUNT(*) as total FROM questions WHERE knowledge_point_id = ? AND review_status = ?',
-        [knowledgePointId, 'approved']
-      );
-      const total = (totalRows as any[])[0].total;
-      const source = questions.length < count ? 'partial_generate' : 'bank';
-
-      res.json({ questions, source, total });
+      const result = await selectionModule.selectQuestions(knowledgePointId, req.student!.studentId, count);
+      res.json(result);
     } catch (err) { next(err); }
   });
 

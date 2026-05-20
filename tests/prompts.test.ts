@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app';
+import { adminToken, TEST_SECRET } from './helpers/tokens';
 
 function mockPool(overrides: Record<string, any> = {}) {
   return {
@@ -26,9 +27,11 @@ describe('Admin Prompt CRUD', () => {
     const pool = mockPool({
       query: vi.fn().mockResolvedValueOnce([[samplePrompt]]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
-    const res = await request(app).get('/api/admin/prompts');
+    const res = await request(app)
+      .get('/api/admin/prompts')
+      .set('Authorization', `Bearer ${adminToken()}`);
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0].prompt_key).toBe('tutor_system');
@@ -37,13 +40,14 @@ describe('Admin Prompt CRUD', () => {
   it('PUT /api/admin/prompts/:key updates a prompt template', async () => {
     const pool = mockPool({
       query: vi.fn()
-        .mockResolvedValueOnce([[{ version: 1 }]]) // SELECT current version
-        .mockResolvedValueOnce([]), // UPDATE
+        .mockResolvedValueOnce([[{ version: 1 }]])
+        .mockResolvedValueOnce([]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
     const res = await request(app)
       .put('/api/admin/prompts/tutor_system')
+      .set('Authorization', `Bearer ${adminToken()}`)
       .send({ template: 'Updated template' });
 
     expect(res.status).toBe(200);
@@ -58,7 +62,7 @@ describe('Internal Prompt API', () => {
     const pool = mockPool({
       query: vi.fn().mockResolvedValueOnce([[samplePrompt]]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
     const res = await request(app).get('/api/prompts/tutor_system');
     expect(res.status).toBe(200);
@@ -69,7 +73,7 @@ describe('Internal Prompt API', () => {
     const pool = mockPool({
       query: vi.fn().mockResolvedValueOnce([[]]),
     });
-    const app = createApp({ dbHealthy: true, pool, jwtSecret: 'test' });
+    const app = createApp({ dbHealthy: true, pool, jwtSecret: TEST_SECRET });
 
     const res = await request(app).get('/api/prompts/unknown_key');
     expect(res.status).toBe(404);

@@ -100,10 +100,9 @@ INSERT INTO prompts (prompt_key, template, description, version) VALUES
 
 -- ============================================================
 -- 管理员账号（密码: admin123，用 bcrypt 哈希）
--- 实际部署时请更换密码
--- ============================================================
+-- 生产环境部署时请更换密码
 INSERT INTO admins (username, password_hash) VALUES
-('admin', '$2b$10$placeholder_change_in_production');
+  ('admin', '$2b$10$i4ttVM98r/42oexUucG2ieNMS7IlL1j/6Ywc51q5asKkYwsUGumMK');
 
 -- ============================================================
 -- 系统配置

@@ -20,13 +20,23 @@ const sampleQuestion = {
   stem: '1+1=?', options: '["1","2","3","4"]', answer: '2', explanation: '基础加法',
 };
 
+function gradePoolMocks(extraOverrides: Record<string, any> = {}) {
+  return mockPool({
+    query: vi.fn()
+      .mockResolvedValueOnce([[sampleQuestion]])
+      .mockResolvedValueOnce([[{ knowledge_point_id: 1 }]])
+      .mockResolvedValueOnce([{ insertId: 1 }])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ cnt: 1 }]])
+      .mockResolvedValueOnce([[{ cnt: 5 }]])
+      .mockResolvedValueOnce([[]]),
+    ...extraOverrides,
+  });
+}
+
 describe('POST /api/grade', () => {
   it('grades text answer correctly', async () => {
-    const pool = mockPool({
-      query: vi.fn()
-        .mockResolvedValueOnce([[sampleQuestion]])  // get question
-        .mockResolvedValueOnce([{ insertId: 1 }]),   // insert answer_record
-    });
+    const pool = gradePoolMocks();
     const llmClient = {
       chatOnce: vi.fn().mockResolvedValue(JSON.stringify({ isCorrect: true, explanation: '答对了！' })),
       analyzeImage: vi.fn(),
@@ -48,7 +58,13 @@ describe('POST /api/grade', () => {
     const pool = mockPool({
       query: vi.fn()
         .mockResolvedValueOnce([[sampleQuestion]])
-        .mockResolvedValueOnce([{ insertId: 1 }]),
+        .mockResolvedValueOnce([[{ knowledge_point_id: 1 }]])
+        .mockResolvedValueOnce([{ insertId: 1 }])
+        .mockResolvedValueOnce([[]])
+        .mockResolvedValueOnce([{ insertId: 1 }])
+        .mockResolvedValueOnce([[{ cnt: 0 }]])
+        .mockResolvedValueOnce([[{ cnt: 5 }]])
+        .mockResolvedValueOnce([[]]),
     });
     const llmClient = {
       chatOnce: vi.fn().mockResolvedValue(JSON.stringify({ isCorrect: false, explanation: '应该是2' })),
@@ -67,11 +83,7 @@ describe('POST /api/grade', () => {
   });
 
   it('grades photo via OCR', async () => {
-    const pool = mockPool({
-      query: vi.fn()
-        .mockResolvedValueOnce([[sampleQuestion]])
-        .mockResolvedValueOnce([{ insertId: 1 }]),
-    });
+    const pool = gradePoolMocks();
     const llmClient = {
       chatOnce: vi.fn().mockResolvedValue(JSON.stringify({ isCorrect: true, explanation: '正确' })),
       analyzeImage: vi.fn().mockResolvedValue('学生答案: 2'),
