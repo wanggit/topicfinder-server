@@ -231,7 +231,33 @@ export function createApp(options: AppOptions) {
     } catch (err) { next(err); }
   });
 
-  // ── Prompts ───────────────────────────────────────
+  // ── Generation Tasks ──────────────────────────────
+  app.post('/api/admin/generation-tasks', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { knowledgePointId, questionTypes, difficulty, count } = req.body;
+      const [result] = await options.pool.query(
+        'INSERT INTO generation_tasks (knowledge_point_id, question_types, difficulty, count, status, progress) VALUES (?, ?, ?, ?, ?, ?)',
+        [knowledgePointId, JSON.stringify(questionTypes), difficulty, count, 'pending', 0]
+      );
+      res.status(201).json({ id: (result as any).insertId, status: 'pending' });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/admin/generation-tasks', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query('SELECT * FROM generation_tasks ORDER BY id DESC');
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/admin/generation-tasks/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query('SELECT * FROM generation_tasks WHERE id = ?', [req.params.id]);
+      const task = (rows as any[])[0];
+      if (!task) { res.status(404).json({ error: { code: 'NOT_FOUND' } }); return; }
+      res.json(task);
+    } catch (err) { next(err); }
+  });
   app.get('/api/admin/prompts', async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const [rows] = await options.pool.query('SELECT * FROM prompts ORDER BY prompt_key');
