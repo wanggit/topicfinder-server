@@ -334,6 +334,75 @@ export function createApp(options: AppOptions) {
     } catch (err) { next(err); }
   });
 
+  // ── Questions Admin CRUD ──────────────────────────
+  app.get('/api/admin/questions', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { kpId, type, difficulty, status, page = '1' } = req.query;
+      const limit = 20;
+      const offset = (Number(page) - 1) * limit;
+      const conditions: string[] = [];
+      const params: any[] = [];
+
+      if (kpId) { conditions.push('knowledge_point_id = ?'); params.push(kpId); }
+      if (type) { conditions.push('type = ?'); params.push(type); }
+      if (difficulty) { conditions.push('difficulty = ?'); params.push(difficulty); }
+      if (status) { conditions.push('review_status = ?'); params.push(status); }
+
+      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const [rows] = await options.pool.query(
+        `SELECT * FROM questions ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+      const [countRows] = await options.pool.query(
+        `SELECT COUNT(*) as total FROM questions ${where}`,
+        params
+      );
+
+      res.json({ questions: rows, total: (countRows as any[])[0].total });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/admin/questions', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { knowledgePointId, type, difficulty, stem, answer, explanation, solutionSteps, commonMistakes, conceptTags } = req.body;
+      const questionOptions = req.body.options;
+      const [result] = await options.pool.query(
+        `INSERT INTO questions (knowledge_point_id, type, difficulty, stem, options, answer, explanation, solution_steps, common_mistakes, concept_tags, review_status, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', 1)`,
+        [knowledgePointId, type, difficulty, stem, JSON.stringify(questionOptions || []), answer, explanation || '',
+         JSON.stringify(solutionSteps || []), JSON.stringify(commonMistakes || []), JSON.stringify(conceptTags || [])]
+      );
+      res.status(201).json({ id: (result as any).insertId });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/admin/questions/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const fields = ['stem', 'type', 'difficulty', 'options', 'answer', 'explanation', 'solution_steps', 'common_mistakes', 'concept_tags'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (req.body[f] !== undefined) {
+          sets.push(`${f} = ?`);
+          params.push(['options', 'solution_steps', 'common_mistakes', 'concept_tags'].includes(f)
+            ? JSON.stringify(req.body[f]) : req.body[f]);
+        }
+      }
+      if (sets.length) {
+        await options.pool.query(`UPDATE questions SET ${sets.join(', ')} WHERE id = ?`, [...params, req.params.id]);
+      }
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/admin/questions/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await options.pool.query('DELETE FROM questions WHERE id = ?', [req.params.id]);
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
   app.get('/error-test', (_req: Request, _res: Response, _next: NextFunction) => {
     throw new Error('Intentional test error');
   });
