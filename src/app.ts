@@ -1,11 +1,18 @@
 import express, { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { WebSocketServer, WebSocket } from 'ws';
+import { Server } from 'http';
 
 export interface AppOptions {
   dbHealthy: boolean;
   pool?: any;
   jwtSecret?: string;
   protectedTestRoute?: boolean;
+  llmClient?: {
+    chatOnce: (messages: any[], model?: string) => Promise<string>;
+    analyzeImage: (imageBase64: string, prompt: string) => Promise<string>;
+    streamChat: (messages: any[], model?: string) => any;
+  };
 }
 
 declare global {
@@ -496,6 +503,70 @@ export function createApp(options: AppOptions) {
     } catch (err) { next(err); }
   });
 
+  // ── Grading ──────────────────────────────────────
+  app.post('/api/grade', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { questionId, studentAnswer, studentImage } = req.body;
+      if (!questionId || (!studentAnswer && !studentImage)) {
+        res.status(400).json({ error: { code: 'MISSING_PARAMS', message: 'questionId and studentAnswer or studentImage required' } });
+        return;
+      }
+
+      const [rows] = await options.pool.query('SELECT * FROM questions WHERE id = ?', [questionId]);
+      const question = (rows as any[])[0];
+      if (!question) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Question not found' } });
+        return;
+      }
+
+      let answerText = studentAnswer;
+      let ocrText: string | undefined;
+
+      // OCR if image provided
+      if (studentImage && options.llmClient) {
+        ocrText = await options.llmClient.analyzeImage(studentImage, 'Extract the student\'s answer from this image. Only return the answer text, no explanation.');
+        answerText = ocrText;
+      }
+
+      // Grade via LLM
+      if (options.llmClient) {
+        const prompt = `Grade this student answer.
+
+Question: ${question.stem}
+Question Type: ${question.type}
+Correct Answer: ${question.answer}
+Student Answer: ${answerText}
+
+Return JSON: {"isCorrect": true|false, "explanation": "brief explanation in Chinese"}`;
+
+        const result = await options.llmClient.chatOnce([{ role: 'user', content: prompt }]);
+        const parsed = JSON.parse(result);
+
+        // Record answer
+        const [kpRows] = await options.pool.query('SELECT knowledge_point_id FROM questions WHERE id = ?', [questionId]);
+        const kpId = (kpRows as any[])[0]?.knowledge_point_id;
+
+        await options.pool.query(
+          'INSERT INTO answer_records (student_id, question_id, knowledge_point_id, is_correct, answered_at) VALUES (?, ?, ?, ?, NOW())',
+          [req.student!.studentId, questionId, kpId, parsed.isCorrect]
+        );
+
+        res.json({ ...parsed, studentOcrText: ocrText });
+      } else {
+        res.json({ isCorrect: false, explanation: 'LLM not configured' });
+      }
+    } catch (err) { next(err); }
+  });
+
+  // ── Payment (stub) ──────────────────────────────
+  app.post('/api/pay/subscribe', authenticate, async (req: Request, res: Response) => {
+    res.json({ prepayId: 'stub-prepay-id', message: 'Payment stub — implement WeChat Pay SDK' });
+  });
+
+  app.post('/api/pay/callback', async (req: Request, res: Response) => {
+    res.json({ code: 'SUCCESS' });
+  });
+
   app.get('/error-test', (_req: Request, _res: Response, _next: NextFunction) => {
     throw new Error('Intentional test error');
   });
@@ -508,6 +579,62 @@ export function createApp(options: AppOptions) {
     });
   });
 
+  const connections = new Map<number, WebSocket>();
+
+  function attachWs(server: Server) {
+    const wss = new WebSocketServer({ server, path: '/ws/tutor' });
+
+    wss.on('connection', (ws, req) => {
+      const url = new URL(req.url || '', 'http://localhost');
+      const token = url.searchParams.get('token');
+
+      if (!token) {
+        ws.close(4001, 'Missing token');
+        return;
+      }
+
+      let studentId: number;
+      try {
+        const payload = jwt.verify(token, jwtSecret) as any;
+        studentId = payload.studentId;
+      } catch {
+        ws.close(4001, 'Invalid token');
+        return;
+      }
+
+      // Kick old connection
+      const existing = connections.get(studentId);
+      if (existing) { existing.close(); }
+      connections.set(studentId, ws);
+
+      ws.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          switch (msg.type) {
+            case 'start_session':
+              ws.send(JSON.stringify({ type: 'session_started', kpId: msg.kpId }));
+              break;
+            case 'student_message':
+              ws.send(JSON.stringify({ type: 'tutor_hint', text: 'Placeholder hint' }));
+              break;
+            case 'end_session':
+              ws.send(JSON.stringify({ type: 'session_end', summary: 'Session ended' }));
+              break;
+            default:
+              ws.send(JSON.stringify({ type: 'error', code: 'UNKNOWN_TYPE' }));
+          }
+        } catch {
+          ws.send(JSON.stringify({ type: 'error', code: 'INVALID_JSON' }));
+        }
+      });
+
+      ws.on('close', () => {
+        connections.delete(studentId);
+      });
+    });
+  }
+
+  (app as any).attachWs = attachWs;
   return app;
 }
 

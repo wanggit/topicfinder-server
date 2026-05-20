@@ -1,5 +1,6 @@
 import { config } from 'dotenv';
 import { createPool } from 'mysql2/promise';
+import { createServer } from 'http';
 import { createApp } from './app';
 
 config();
@@ -34,7 +35,9 @@ async function main() {
   });
 
   const port = process.env.PORT || 3001;
-  const server = app.listen(port, () => {
+  const server = createServer(app);
+  (app as any).attachWs(server);
+  server.listen(port, () => {
     console.log(`Server running on port ${port}`);
   });
 
