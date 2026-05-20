@@ -269,6 +269,71 @@ export function createApp(options: AppOptions) {
       res.json(prompt);
     } catch (err) { next(err); }
   });
+  // ── Knowledge: Subjects ──────────────────────────
+  app.get('/api/admin/subjects', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { gradeId } = req.query;
+      const [rows] = await options.pool.query(
+        'SELECT * FROM subjects WHERE grade_id = ? ORDER BY sort_order',
+        [gradeId]
+      );
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/admin/subjects', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { gradeId, name, sortOrder } = req.body;
+      const [result] = await options.pool.query(
+        'INSERT INTO subjects (grade_id, name, sort_order) VALUES (?, ?, ?)',
+        [gradeId, name, sortOrder || 0]
+      );
+      res.status(201).json({ id: (result as any).insertId, grade_id: gradeId, name });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/admin/subjects/:id', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await options.pool.query('DELETE FROM knowledge_points WHERE subject_id = ?', [req.params.id]);
+      await options.pool.query('DELETE FROM subjects WHERE id = ?', [req.params.id]);
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
+  // ── Knowledge: KnowledgePoints ────────────────────
+  app.get('/api/admin/knowledge-points', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { subjectId } = req.query;
+      const [rows] = await options.pool.query(
+        'SELECT * FROM knowledge_points WHERE subject_id = ? ORDER BY id',
+        [subjectId]
+      );
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/admin/knowledge-points', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { subjectId, name, description } = req.body;
+      const [result] = await options.pool.query(
+        'INSERT INTO knowledge_points (subject_id, name, description) VALUES (?, ?, ?)',
+        [subjectId, name, description || '']
+      );
+      res.status(201).json({ id: (result as any).insertId, subject_id: subjectId, name });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/admin/knowledge-points/:id/versions', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { versionIds } = req.body;
+      await options.pool.query('DELETE FROM kp_versions WHERE kp_id = ?', [req.params.id]);
+      for (const versionId of versionIds) {
+        await options.pool.query('INSERT INTO kp_versions (kp_id, version_id) VALUES (?, ?)', [req.params.id, versionId]);
+      }
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
   app.get('/error-test', (_req: Request, _res: Response, _next: NextFunction) => {
     throw new Error('Intentional test error');
   });
