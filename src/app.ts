@@ -429,6 +429,73 @@ export function createApp(options: AppOptions) {
     } catch (err) { next(err); }
   });
 
+  // ── Question Selection ────────────────────────────
+  app.post('/api/questions/select', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { knowledgePointId, freeDescription, count = 10 } = req.body;
+      const studentId = req.student!.studentId;
+
+      const [records] = await options.pool.query(
+        'SELECT id FROM answer_records WHERE student_id = ? AND knowledge_point_id = ? LIMIT 1',
+        [studentId, knowledgePointId]
+      );
+      const isFirstContact = (records as any[]).length === 0;
+
+      let questions: any[] = [];
+
+      if (isFirstContact) {
+        const [rows] = await options.pool.query(
+          'SELECT * FROM questions WHERE knowledge_point_id = ? AND review_status = ? ORDER BY FIELD(difficulty, "easy","medium","hard") LIMIT ?',
+          [knowledgePointId, 'approved', count]
+        );
+        questions = rows as any[];
+      } else {
+        const [wrongRows] = await options.pool.query(
+          'SELECT question_id FROM wrong_notes WHERE student_id = ? AND consecutive_correct < 3 ORDER BY updated_at DESC',
+          [studentId]
+        );
+        const wrongIds = (wrongRows as any[]).map(r => r.question_id);
+
+        if (wrongIds.length > 0) {
+          const placeholders = wrongIds.map(() => '?').join(',');
+          const [wrongQs] = await options.pool.query(
+            `SELECT * FROM questions WHERE id IN (${placeholders}) AND review_status = ?`,
+            [...wrongIds, 'approved']
+          );
+          questions = wrongQs as any[];
+        }
+
+        const remaining = count - questions.length;
+        if (remaining > 0) {
+          const existingIds = questions.map(q => q.id);
+          if (existingIds.length > 0) {
+            const placeholders = existingIds.map(() => '?').join(',');
+            const [more] = await options.pool.query(
+              `SELECT * FROM questions WHERE knowledge_point_id = ? AND review_status = ? AND id NOT IN (${placeholders}) ORDER BY FIELD(difficulty, "easy","medium","hard") LIMIT ?`,
+              [knowledgePointId, 'approved', ...existingIds, remaining]
+            );
+            questions = questions.concat(more as any[]);
+          } else {
+            const [more] = await options.pool.query(
+              'SELECT * FROM questions WHERE knowledge_point_id = ? AND review_status = ? ORDER BY FIELD(difficulty, "easy","medium","hard") LIMIT ?',
+              [knowledgePointId, 'approved', remaining]
+            );
+            questions = questions.concat(more as any[]);
+          }
+        }
+      }
+
+      const [totalRows] = await options.pool.query(
+        'SELECT COUNT(*) as total FROM questions WHERE knowledge_point_id = ? AND review_status = ?',
+        [knowledgePointId, 'approved']
+      );
+      const total = (totalRows as any[])[0].total;
+      const source = questions.length < count ? 'partial_generate' : 'bank';
+
+      res.json({ questions, source, total });
+    } catch (err) { next(err); }
+  });
+
   app.get('/error-test', (_req: Request, _res: Response, _next: NextFunction) => {
     throw new Error('Intentional test error');
   });
