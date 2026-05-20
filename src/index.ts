@@ -27,7 +27,11 @@ async function checkDb(): Promise<boolean> {
 
 async function main() {
   const dbHealthy = await checkDb();
-  const app = createApp({ dbHealthy });
+  const app = createApp({
+    dbHealthy,
+    pool,
+    jwtSecret: process.env.JWT_SECRET || 'dev-secret',
+  });
 
   const port = process.env.PORT || 3001;
   const server = app.listen(port, () => {
