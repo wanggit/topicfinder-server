@@ -551,6 +551,60 @@ Return JSON: {"isCorrect": true|false, "explanation": "brief explanation in Chin
           [req.student!.studentId, questionId, kpId, parsed.isCorrect]
         );
 
+        // Update wrong_notes
+        if (parsed.isCorrect) {
+          const [wnRows] = await options.pool.query(
+            'SELECT id, consecutive_correct, last_correct_at FROM wrong_notes WHERE student_id = ? AND question_id = ?',
+            [req.student!.studentId, questionId]
+          );
+          const wn = (wnRows as any[])[0];
+          if (wn) {
+            const newCount = wn.consecutive_correct + 1;
+            const now = new Date();
+            const lastDate = wn.last_correct_at ? new Date(wn.last_correct_at) : null;
+            const dayDiff = lastDate ? Math.floor((now.getTime() - lastDate.getTime()) / 86400000) : 0;
+            const mastered = newCount >= 3 && dayDiff >= 1;
+            await options.pool.query(
+              'UPDATE wrong_notes SET consecutive_correct = ?, last_correct_at = NOW() WHERE id = ?',
+              [newCount, wn.id]
+            );
+          }
+        } else {
+          const [existing] = await options.pool.query(
+            'SELECT id FROM wrong_notes WHERE student_id = ? AND question_id = ?',
+            [req.student!.studentId, questionId]
+          );
+          if ((existing as any[]).length === 0) {
+            await options.pool.query(
+              'INSERT INTO wrong_notes (student_id, question_id, knowledge_point_id, consecutive_correct) VALUES (?, ?, ?, 0)',
+              [req.student!.studentId, questionId, kpId]
+            );
+          }
+        }
+
+        // Auto-supplement check: if coverage >= 70%, trigger generation task
+        const [correctRows] = await options.pool.query(
+          'SELECT COUNT(*) as cnt FROM answer_records WHERE student_id = ? AND knowledge_point_id = ? AND is_correct = 1',
+          [req.student!.studentId, kpId]
+        );
+        const [totalQ] = await options.pool.query(
+          'SELECT COUNT(*) as cnt FROM questions WHERE knowledge_point_id = ? AND review_status = ?',
+          [kpId, 'approved']
+        );
+        const coverage = (totalQ as any[])[0].cnt > 0 ? (correctRows as any[])[0].cnt / (totalQ as any[])[0].cnt : 0;
+        if (coverage >= 0.7) {
+          const [pendingTasks] = await options.pool.query(
+            'SELECT id FROM generation_tasks WHERE knowledge_point_id = ? AND status = ?',
+            [kpId, 'pending']
+          );
+          if ((pendingTasks as any[]).length === 0) {
+            await options.pool.query(
+              'INSERT INTO generation_tasks (knowledge_point_id, question_types, difficulty, count, status, progress) VALUES (?, ?, ?, ?, ?, ?)',
+              [kpId, JSON.stringify(['choice', 'fill', 'essay']), 'easy', 10, 'pending', 0]
+            );
+          }
+        }
+
         res.json({ ...parsed, studentOcrText: ocrText });
       } else {
         res.json({ isCorrect: false, explanation: 'LLM not configured' });
@@ -565,6 +619,70 @@ Return JSON: {"isCorrect": true|false, "explanation": "brief explanation in Chin
 
   app.post('/api/pay/callback', async (req: Request, res: Response) => {
     res.json({ code: 'SUCCESS' });
+  });
+
+  // ── Wrong Notes API ─────────────────────────────
+  app.get('/api/wrong-notes', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query(
+        `SELECT wn.*, q.stem, q.type, q.difficulty, q.answer, kp.name as kp_name
+         FROM wrong_notes wn
+         JOIN questions q ON q.id = wn.question_id
+         JOIN knowledge_points kp ON kp.id = wn.knowledge_point_id
+         WHERE wn.student_id = ? AND wn.consecutive_correct < 3
+         ORDER BY wn.updated_at DESC`,
+        [req.student!.studentId]
+      );
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/profile', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query('SELECT trial_expires_at, subscription_status FROM students WHERE id = ?', [req.student!.studentId]);
+      const s = (rows as any[])[0];
+      const [statsRows] = await options.pool.query(
+        'SELECT COUNT(*) as today_questions, SUM(is_correct) as today_correct FROM answer_records WHERE student_id = ? AND DATE(answered_at) = CURDATE()',
+        [req.student!.studentId]
+      );
+      res.json({ ...s, ...(statsRows as any[])[0] });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/leaderboard', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query(
+        `SELECT s.openid, COUNT(ar.id) as total, SUM(ar.is_correct) as correct
+         FROM answer_records ar JOIN students s ON s.id = ar.student_id
+         GROUP BY s.id ORDER BY correct DESC LIMIT 50`
+      );
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
+  // ── Admin Stats ────────────────────────────────
+  app.get('/api/admin/stats', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [[students], [questions], [answers]] = await Promise.all([
+        options.pool.query('SELECT COUNT(*) as cnt FROM students'),
+        options.pool.query('SELECT COUNT(*) as cnt FROM questions'),
+        options.pool.query('SELECT COUNT(*) as cnt FROM answer_records'),
+        options.pool.query('SELECT COUNT(DISTINCT student_id) as cnt FROM answer_records WHERE DATE(answered_at) = CURDATE()'),
+      ]);
+      res.json({
+        totalStudents: (students as any[])[0].cnt,
+        totalQuestions: (questions as any[])[0].cnt,
+        totalAnswers: (answers as any[])[0].cnt,
+        activeToday: 0,
+      });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/admin/users', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const [rows] = await options.pool.query('SELECT * FROM students ORDER BY id DESC LIMIT 50');
+      res.json(rows);
+    } catch (err) { next(err); }
   });
 
   app.get('/error-test', (_req: Request, _res: Response, _next: NextFunction) => {
