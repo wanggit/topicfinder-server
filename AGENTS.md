@@ -12,6 +12,35 @@ TopicFinder 拆为三个独立仓库，这是后台服务端：
 
 领域术语见 `docs/CONTEXT.md`，架构决策见 `docs/adr/`。
 
+## Cross-Repo Development
+
+在当前仓库（server）完成多端联调的方法：
+
+**使用 Bash 工具的 `workdir` 参数**在三个仓库间切换执行命令：
+
+```
+# 在 admin 仓库跑测试
+workdir=/home/wanggang/Documents/topicfinder-admin npm test
+
+# 在 mini-program 仓库安装依赖
+workdir=/home/wanggang/Documents/topicfinder-miniapp npm install
+
+# 在 mini-program 仓库编辑文件（用绝对路径）
+Read /home/wanggang/Documents/topicfinder-miniapp/src/pages/learning/index.tsx
+Edit /home/wanggang/Documents/topicfinder-miniapp/src/pages/learning/index.tsx
+```
+
+**典型联调流程**（如"选题 API + 前端页面"）：
+
+1. 在 server 写 API 路由 + 测试（`tests/`, `src/app.ts`）
+2. `workdir=../topicfinder-miniapp` 更新小程序页面调新 API
+3. 两端各自跑 lint + test 验证
+
+**原则**：
+- 先在 server 端完成 API + 测试（mock LLM），保证后端行为正确
+- 再改前端使用已稳定的 API 契约
+- 管理后台和小程序可以并行改——它们只依赖 API，不互相依赖
+
 ## Commands
 
 ```bash
